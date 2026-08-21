@@ -49,7 +49,10 @@ ws://<RK3588_IP>:8765/voiceedge
   "asr_segments": 3,
   "asr_drops": 0,
   "asr_failures": 0,
-  "asr_processing_ms": 210
+  "asr_processing_ms": 210,
+  "audio_state": "online",
+  "capture_reconnects": 0,
+  "capture_reconnect_failures": 0
 }
 ```
 
@@ -73,6 +76,16 @@ VAD 事件使用文本 JSON：
 ```
 
 `asr` 状态为 `idle` 或 `processing`；ASR 模型未启用时保持 `idle`。
+
+音频设备异常和恢复使用文本事件：
+
+```json
+{"type":"audio_event","event":"capture_reconnecting"}
+{"type":"audio_event","event":"capture_reconnected"}
+```
+
+状态中的 `audio_state` 为 `online` 或 `reconnecting`。设备重连采用退避策略，
+不会因为一次 ALSA/USB I/O 错误直接退出 WebSocket Server。
 
 ## 二进制音频消息
 

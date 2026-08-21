@@ -128,3 +128,17 @@ cmake -S . -B build \
 `pipeline_probe` keeps ASR inference in a separate bounded queue and worker.
 See [`docs/asr.md`](../docs/asr.md) for model paths, options and acceptance
 metrics.
+
+To persist final ASR records locally, explicitly enable one or both outputs:
+
+```bash
+build/pipeline_probe \
+  --asr-model="$SENSEVOICE_MODEL_DIR/model.int8.onnx" \
+  --asr-tokens="$SENSEVOICE_MODEL_DIR/tokens.txt" \
+  --persist-dir=/data/voiceedge \
+  --persist-audio \
+  --persist-transcript
+```
+
+Audio is saved as speech-segment WAV files and text/metadata as JSONL. Both
+outputs are disabled by default.

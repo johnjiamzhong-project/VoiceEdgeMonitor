@@ -66,8 +66,14 @@
         <canvas id="waveform" width="1200" height="300"></canvas>
         <div class="audio-controls">
           <button id="listen-button" class="primary" disabled>开始监听</button>
+          <button id="mute-button" disabled>静音</button>
+          <label class="volume-control" for="volume-range">音量
+            <input id="volume-range" type="range" min="0" max="1" step="0.05" value="0.25" disabled />
+          </label>
+          <output id="volume-value">25%</output>
           <span id="audio-status" class="muted">浏览器音频需要用户点击后启动</span>
         </div>
+        <p class="warning">外放会让 C310 麦克风产生声学回授，建议使用耳机并保持低音量。</p>
       </section>
 
       <section class="two-column">

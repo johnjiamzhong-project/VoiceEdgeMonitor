@@ -7,6 +7,7 @@
 #ifdef VOICEEDGE_HAS_ASR
 #include "offline_asr.hpp"
 #endif
+#include "recording_store.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
@@ -108,6 +109,10 @@ struct Options {
   std::string asr_language{"zh"};
   std::string asr_provider{"cpu"};
   int asr_threads{2};
+  std::string persist_dir;
+  bool persist_audio{false};
+  bool persist_transcript{false};
+  std::size_t persist_queue_capacity{32};
 };
 
 struct AlsaCapture {
@@ -135,6 +140,11 @@ struct ServerStats {
   std::atomic<std::uint64_t> asr_overflows{0};
   std::atomic<std::uint64_t> asr_processing_ms{0};
   std::atomic<bool> asr_processing{false};
+  std::atomic<std::uint64_t> persist_drops{0};
+  std::atomic<std::uint64_t> persist_failures{0};
+  std::atomic<std::uint64_t> capture_reconnects{0};
+  std::atomic<std::uint64_t> capture_reconnect_failures{0};
+  std::atomic<int> audio_state{0};  // 0=online, 1=reconnecting
 };
 
 std::string default_device() {
@@ -218,7 +228,11 @@ Options parse_options(int argc, char** argv) {
           << "  --asr-provider <name>         ASR provider (default: cpu)\n"
           << "  --asr-threads <n>             ASR inference threads (default: 2)\n"
           << "  --asr-queue-capacity <n>      ASR segment queue capacity (default: 4)\n"
-          << "  --max-segment-ms <ms>         maximum speech segment (default: 30000)\n";
+          << "  --max-segment-ms <ms>         maximum speech segment (default: 30000)\n"
+          << "  --persist-dir <path>          local recording/transcript root\n"
+          << "  --persist-audio               save speech segments as WAV\n"
+          << "  --persist-transcript          save recognition records as JSONL\n"
+          << "  --persist-queue-capacity <n>  persistence queue capacity (default: 32)\n";
       std::exit(0);
     }
     if (argument.rfind("--bind", 0) == 0) {
@@ -328,6 +342,18 @@ Options parse_options(int argc, char** argv) {
           option_value(index, argc, argv, "--max-segment-ms"), "--max-segment-ms");
       if (options.max_segment_ms == 0) {
         throw std::invalid_argument("--max-segment-ms must be greater than zero");
+      }
+    } else if (argument.rfind("--persist-dir", 0) == 0) {
+      options.persist_dir = option_value(index, argc, argv, "--persist-dir");
+    } else if (argument == "--persist-audio") {
+      options.persist_audio = true;
+    } else if (argument == "--persist-transcript") {
+      options.persist_transcript = true;
+    } else if (argument.rfind("--persist-queue-capacity", 0) == 0) {
+      options.persist_queue_capacity = static_cast<std::size_t>(parse_uint64(
+          option_value(index, argc, argv, "--persist-queue-capacity"), "--persist-queue-capacity"));
+      if (options.persist_queue_capacity == 0) {
+        throw std::invalid_argument("--persist-queue-capacity must be greater than zero");
       }
     } else {
       throw std::invalid_argument("unknown option: " + argument);
@@ -578,6 +604,18 @@ class ServerRuntime {
       throw std::invalid_argument("ws_server was built without ASR support; rebuild with VOICEEDGE_BUILD_ASR=ON");
     }
 #endif
+    if (options_.persist_audio || options_.persist_transcript) {
+      if (options_.persist_dir.empty()) {
+        throw std::invalid_argument("--persist-dir is required when persistence is enabled");
+      }
+      recording_store_ = std::make_unique<voiceedge::RecordingStore>(
+          voiceedge::RecordingStoreConfig{options_.persist_dir, options_.persist_audio,
+                                          options_.persist_transcript, options_.persist_queue_capacity});
+      recording_store_->start();
+      std::cout << "ws_persistence_enabled root=\"" << options_.persist_dir
+                << "\" audio=" << (options_.persist_audio ? "true" : "false")
+                << " transcript=" << (options_.persist_transcript ? "true" : "false") << '\n';
+    }
     const auto address = asio::ip::make_address(options_.bind_address);
     tcp::endpoint endpoint(address, options_.port);
     beast::error_code error;
@@ -648,7 +686,10 @@ class ServerRuntime {
     beast::error_code error;
     acceptor_.cancel(error);
     acceptor_.close(error);
-    snd_pcm_drop(audio_.pcm.get());
+    snd_pcm_t* pcm = pcm_for_stop_.load(std::memory_order_acquire);
+    if (pcm != nullptr) {
+      snd_pcm_drop(pcm);
+    }
 
     std::vector<std::shared_ptr<ClientSession>> clients;
     {
@@ -673,6 +714,11 @@ class ServerRuntime {
     }
 #endif
     std::cerr << "ws_server_shutdown stage=asr_joined\n";
+    if (recording_store_) {
+      recording_store_->stop();
+      stats_.persist_failures.store(recording_store_->failed_records(), std::memory_order_relaxed);
+    }
+    std::cerr << "ws_server_shutdown stage=persistence_joined\n";
     for (const auto& client : clients) {
       client->join();
     }
@@ -772,6 +818,7 @@ class ServerRuntime {
   void capture_loop() {
     std::vector<std::int16_t> samples(
         static_cast<std::size_t>(audio_.period_frames) * audio_.channels);
+    pcm_for_stop_.store(audio_.pcm.get(), std::memory_order_release);
     while (!stopping_.load(std::memory_order_relaxed) &&
            !g_signal_stop.load(std::memory_order_relaxed)) {
       const snd_pcm_sframes_t read_frames =
@@ -787,10 +834,11 @@ class ServerRuntime {
         const int recovered = snd_pcm_recover(audio_.pcm.get(), static_cast<int>(read_frames), 1);
         if (recovered < 0) {
           ++stats_.read_errors;
-          std::cerr << "ws_server_error stage=capture error="
-                    << snd_strerror(static_cast<int>(read_frames))
-                    << " recovery=" << snd_strerror(recovered) << '\n';
-          break;
+          if (!reopen_capture()) {
+            break;
+          }
+          samples.resize(static_cast<std::size_t>(audio_.period_frames) * audio_.channels);
+          continue;
         }
         ++stats_.recoveries;
         continue;
@@ -826,7 +874,42 @@ class ServerRuntime {
       const auto packet = std::make_shared<std::vector<std::uint8_t>>(encode_audio_packet(*frame));
       broadcast(packet, true);
     }
+    pcm_for_stop_.store(nullptr, std::memory_order_release);
     asr_queue_.close();
+  }
+
+  bool reopen_capture() {
+    stats_.audio_state.store(1, std::memory_order_relaxed);
+    broadcast_text("{\"type\":\"audio_event\",\"event\":\"capture_reconnecting\"}");
+    pcm_for_stop_.store(nullptr, std::memory_order_release);
+    audio_.pcm.reset();
+
+    std::uint64_t backoff_ms = 100;
+    while (!stopping_.load(std::memory_order_relaxed) &&
+           !g_signal_stop.load(std::memory_order_relaxed)) {
+      for (std::uint64_t elapsed = 0; elapsed < backoff_ms &&
+                                      !stopping_.load(std::memory_order_relaxed) &&
+                                      !g_signal_stop.load(std::memory_order_relaxed);
+           elapsed += 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+      if (stopping_.load(std::memory_order_relaxed) || g_signal_stop.load(std::memory_order_relaxed)) {
+        return false;
+      }
+      try {
+        audio_ = open_capture(options_);
+        pcm_for_stop_.store(audio_.pcm.get(), std::memory_order_release);
+        stats_.capture_reconnects.fetch_add(1, std::memory_order_relaxed);
+        stats_.audio_state.store(0, std::memory_order_relaxed);
+        broadcast_text("{\"type\":\"audio_event\",\"event\":\"capture_reconnected\"}");
+        return true;
+      } catch (const std::exception& error) {
+        stats_.capture_reconnect_failures.fetch_add(1, std::memory_order_relaxed);
+        std::cerr << "ws_server_error stage=capture_reopen error=" << error.what() << '\n';
+        backoff_ms = std::min<std::uint64_t>(backoff_ms * 2, 5000);
+      }
+    }
+    return false;
   }
 
   void update_level_stats(const AudioFrame& frame) {
@@ -881,12 +964,20 @@ class ServerRuntime {
              << ",\"audio_ms\":" << std::fixed << std::setprecision(1) << audio_ms
              << ",\"rtf\":" << std::setprecision(4) << rtf << "}";
         broadcast_text(json.str());
+        if (recording_store_ && !recording_store_->enqueue(
+                voiceedge::RecordingRecord{segment, result.text, "final", result.processing_ms, rtf, ""})) {
+          ++stats_.persist_drops;
+        }
       } catch (const std::exception& error) {
         ++stats_.asr_failures;
         std::ostringstream json;
         json << "{\"type\":\"asr_failed\",\"segment_id\":" << segment->id
              << ",\"reason\":\"" << json_escape(error.what()) << "\"}";
         broadcast_text(json.str());
+        if (recording_store_ && !recording_store_->enqueue(
+                voiceedge::RecordingRecord{segment, "", "failed", 0, 0.0, error.what()})) {
+          ++stats_.persist_drops;
+        }
       }
       stats_.asr_processing.store(false, std::memory_order_relaxed);
     }
@@ -946,6 +1037,14 @@ class ServerRuntime {
          << ",\"asr_drops\":" << stats_.asr_drops.load(std::memory_order_relaxed)
          << ",\"asr_failures\":" << stats_.asr_failures.load(std::memory_order_relaxed)
          << ",\"asr_processing_ms\":" << stats_.asr_processing_ms.load(std::memory_order_relaxed)
+         << ",\"audio_state\":\""
+         << (stats_.audio_state.load(std::memory_order_relaxed) == 0 ? "online" : "reconnecting")
+         << "\",\"capture_reconnects\":"
+         << stats_.capture_reconnects.load(std::memory_order_relaxed)
+         << ",\"capture_reconnect_failures\":"
+         << stats_.capture_reconnect_failures.load(std::memory_order_relaxed)
+         << ",\"persist_drops\":" << stats_.persist_drops.load(std::memory_order_relaxed)
+         << ",\"persist_failures\":" << stats_.persist_failures.load(std::memory_order_relaxed)
          << "}";
     return json.str();
   }
@@ -967,6 +1066,7 @@ class ServerRuntime {
 #ifdef VOICEEDGE_HAS_ASR
   std::unique_ptr<voiceedge::OfflineASR> asr_;
 #endif
+  std::unique_ptr<voiceedge::RecordingStore> recording_store_;
   bool segment_active_{false};
   std::uint64_t next_segment_id_{0};
   std::uint64_t segment_start_ms_{0};
@@ -979,6 +1079,7 @@ class ServerRuntime {
 #ifdef VOICEEDGE_HAS_ASR
   std::thread asr_thread_;
 #endif
+  std::atomic<snd_pcm_t*> pcm_for_stop_{nullptr};
 };
 
 }  // namespace

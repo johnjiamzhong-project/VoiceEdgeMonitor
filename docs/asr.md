@@ -54,6 +54,27 @@ Pipeline 启用 ASR 的关键参数：
 --max-segment-ms 30000
 ```
 
+## 本地保存
+
+保存默认关闭。需要保存时显式指定目录和类型：
+
+```bash
+--persist-dir=/data/voiceedge \
+--persist-audio \
+--persist-transcript
+```
+
+保存结构：
+
+```text
+/data/voiceedge/
+├── transcripts.jsonl
+└── recordings/YYYY-MM-DD/segment-00000001.wav
+```
+
+持久化使用独立有界队列和后台线程，不阻塞 ALSA、VAD、ASR 或 WebSocket。磁盘
+轮转、最大占用和隐私策略需要在部署环境中进一步配置。
+
 ## 首轮目标板结果
 
 C310 连续 30 秒测试中已完成 8 个 ASR 语音段，观测到：

@@ -11,6 +11,125 @@ VoiceEdgeMonitor 是一个基于 RK3588 的边缘语音采集、识别与 Web �
 
 本项目重点不是做完整的智能音箱，而是构建一个稳定、可观测、可扩展的边缘语音处理系统。
 
+## 当前状态
+
+这是一个可运行的 MVP/技术预览版本：
+
+- Phase 1：C310 ALSA 采集已完成
+- Phase 2：有界音频处理队列已完成
+- Phase 3：RK3588 WebSocket Server 和 CLI Client 已完成
+- Phase 4：能量 VAD 已接入
+- Phase 5：离线 SenseVoice ASR 和 WebSocket ASR 事件已接入
+- Phase 6：浏览器 Web UI 初版已完成
+- Phase 7：长时间稳定性、慢客户端和断线恢复验收进行中
+
+当前正式输入设备是 Logitech C310 USB 麦克风，3.5mm CTIA 输入保留为后续兼容项。
+
+核心闭环已经在 RK3588 上验证：
+
+```text
+C310
+  → ALSA
+  → bounded audio queues
+  → VAD
+  → SenseVoice offline ASR
+  → WebSocket Server
+  → CLI / Browser Web Client
+```
+
+## 快速开始
+
+### 1. RK3588 板端构建
+
+在 RK3588 的项目目录中准备以下环境：
+
+- ARM64 Linux
+- C++17、CMake、pkg-config
+- ALSA 开发库
+- Boost.Beast 头文件
+- sherpa-onnx 运行库和 SenseVoice 模型（放在仓库外部）
+
+设置外部资源路径后构建：
+
+```bash
+export SHERPA_ONNX_ROOT=/path/to/sherpa-onnx-runtime
+export SENSEVOICE_MODEL_DIR=/path/to/sensevoice-model
+
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DBUILD_TESTING=ON \
+  -DVOICEEDGE_BUILD_ALSA=ON \
+  -DVOICEEDGE_BUILD_WS=ON \
+  -DVOICEEDGE_BUILD_ASR=ON \
+  -DSHERPA_ONNX_ROOT="$SHERPA_ONNX_ROOT"
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+### 2. 启动 RK3588 WebSocket Server
+
+```bash
+build/ws_server \
+  --bind=0.0.0.0 \
+  --port=8765 \
+  --path=/voiceedge \
+  --device=hw:CARD=U0x46d0x81b,DEV=0 \
+  --period-frames=2000 \
+  --buffer-frames=8000 \
+  --asr-model="$SENSEVOICE_MODEL_DIR/model.int8.onnx" \
+  --asr-tokens="$SENSEVOICE_MODEL_DIR/tokens.txt" \
+  --asr-language=zh \
+  --asr-provider=cpu \
+  --asr-threads=2
+```
+
+默认音频参数：16 kHz、单声道、`S16_LE`。USB 声卡编号可能变化，优先使用稳定的
+`CARD=` 设备名，不要固定使用 `hw:1,0` 或 `hw:2,0`。
+
+### 3. 启动主机 Web 页面
+
+在 WSL 或主机项目根目录执行：
+
+```bash
+python3 -m http.server 8080 --directory web
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8080/?ws=ws://<RK3588_IP>:8765/voiceedge
+```
+
+页面会显示设备状态、波形、VAD、ASR 文本和运行事件。音频监听必须由用户点击
+启动；外放可能造成 C310 声学回授，建议使用耳机。
+
+### 4. 可选本地保存
+
+音频和识别文字默认不保存。需要保存时，在板端 Server 启动参数中显式增加：
+
+```bash
+--persist-dir=/data/voiceedge \
+--persist-audio \
+--persist-transcript
+```
+
+语音段会保存为 WAV，识别结果和元数据保存为 JSONL。当前 Web UI 没有保存按钮。
+
+## 文档入口
+
+- [板端构建、采集、Pipeline 和 Server 说明](board/README.md)
+- [WebSocket 协议](docs/protocol.md)
+- [VAD 设计与验收](docs/vad.md)
+- [离线 ASR、模型和持久化](docs/asr.md)
+- [浏览器 Web Client](web/README.md)
+
+## 已知限制
+
+- C310 可能受到 USB Hub、线缆或供电影响而自动 reset；Server 已支持 ALSA 设备退避重连，但仍需长时间验证。
+- 尚未完成固定中文测试集上的 CER、噪声环境识别质量和完整链路 10～30 分钟验收。
+- 尚未完成慢客户端压力测试、浏览器兼容性矩阵和 TLS/鉴权。
+- 3.5mm CTIA 输入尚未作为当前第一阶段主输入验收。
+
 ---
 
 ## 一、项目目标

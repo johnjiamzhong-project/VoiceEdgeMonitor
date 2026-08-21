@@ -162,6 +162,10 @@ add_executable(energy_vad_test
     tests/energy_vad_test.cpp
 )
 
+add_executable(recording_store_test
+    tests/recording_store_test.cpp
+)
+
 target_compile_options(bounded_queue_test PRIVATE
     -Wall
     -Wextra
@@ -180,11 +184,18 @@ target_compile_options(energy_vad_test PRIVATE
     -Wpedantic
 )
 
+target_compile_options(recording_store_test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME bounded_queue_test COMMAND bounded_queue_test)
     add_test(NAME protocol_test COMMAND protocol_test)
     add_test(NAME energy_vad_test COMMAND energy_vad_test)
+    add_test(NAME recording_store_test COMMAND recording_store_test)
     if(VOICEEDGE_BUILD_ALSA)
         add_test(NAME capture_probe_help COMMAND capture_probe --help)
         add_test(NAME pipeline_probe_help COMMAND pipeline_probe --help)

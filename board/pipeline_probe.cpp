@@ -6,6 +6,7 @@
 #ifdef VOICEEDGE_HAS_ASR
 #include "offline_asr.hpp"
 #endif
+#include "recording_store.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -85,6 +86,10 @@ struct Options {
   std::string asr_language{"zh"};
   std::string asr_provider{"cpu"};
   int asr_threads{2};
+  std::string persist_dir;
+  bool persist_audio{false};
+  bool persist_transcript{false};
+  std::size_t persist_queue_capacity{32};
 };
 
 struct AlsaCapture {
@@ -114,6 +119,8 @@ struct PipelineStats {
   std::atomic<std::uint64_t> asr_failures{0};
   std::atomic<std::uint64_t> asr_overflows{0};
   std::atomic<std::uint64_t> asr_processing_ms{0};
+  std::atomic<std::uint64_t> persist_drops{0};
+  std::atomic<std::uint64_t> persist_failures{0};
   std::atomic<int> vad_state{static_cast<int>(voiceedge::VadState::Idle)};
   std::atomic<std::int64_t> last_rms_dbfs_x10{-1200};
   std::atomic<std::int64_t> last_peak_dbfs_x10{-1200};
@@ -140,6 +147,7 @@ struct PipelineContext {
 #ifdef VOICEEDGE_HAS_ASR
   std::unique_ptr<voiceedge::OfflineASR> asr;
 #endif
+  std::unique_ptr<voiceedge::RecordingStore> recording_store;
   bool segment_active{false};
   std::uint64_t next_segment_id{0};
   std::uint64_t segment_start_ms{0};
@@ -222,6 +230,10 @@ void print_usage(const char* program) {
       << "  --asr-threads <n>           ASR inference threads (default: 2)\n"
       << "  --asr-queue-capacity <n>    ASR segment queue capacity (default: 4)\n"
       << "  --max-segment-ms <ms>       maximum buffered speech segment (default: 30000)\n"
+      << "  --persist-dir <path>        local recording/transcript root\n"
+      << "  --persist-audio             save speech segments as WAV\n"
+      << "  --persist-transcript        save recognition records as JSONL\n"
+      << "  --persist-queue-capacity <n> persistence queue capacity (default: 32)\n"
       << "  --help                       show this help\n";
 }
 
@@ -325,6 +337,18 @@ Options parse_options(int argc, char** argv) {
           option_value(index, argc, argv, "--max-segment-ms"), "--max-segment-ms");
       if (options.max_segment_ms == 0) {
         throw std::invalid_argument("--max-segment-ms must be greater than zero");
+      }
+    } else if (argument.rfind("--persist-dir", 0) == 0) {
+      options.persist_dir = option_value(index, argc, argv, "--persist-dir");
+    } else if (argument == "--persist-audio") {
+      options.persist_audio = true;
+    } else if (argument == "--persist-transcript") {
+      options.persist_transcript = true;
+    } else if (argument.rfind("--persist-queue-capacity", 0) == 0) {
+      options.persist_queue_capacity = static_cast<std::size_t>(parse_uint64(
+          option_value(index, argc, argv, "--persist-queue-capacity"), "--persist-queue-capacity"));
+      if (options.persist_queue_capacity == 0) {
+        throw std::invalid_argument("--persist-queue-capacity must be greater than zero");
       }
     } else {
       throw std::invalid_argument("unknown option: " + argument);
@@ -553,10 +577,22 @@ void asr_worker(PipelineContext& context) {
                 << " processing_ms=" << result.processing_ms
                 << " audio_ms=" << std::fixed << std::setprecision(1) << audio_ms
                 << " rtf=" << std::setprecision(4) << rtf << '\n';
+      if (context.recording_store) {
+        if (!context.recording_store->enqueue(
+                voiceedge::RecordingRecord{segment, result.text, "final", result.processing_ms, rtf, ""})) {
+          ++context.stats.persist_drops;
+        }
+      }
     } catch (const std::exception& error) {
       ++context.stats.asr_failures;
       std::cerr << "asr_event type=asr_failed segment_id=" << segment->id
                 << " error=" << error.what() << '\n';
+      if (context.recording_store) {
+        if (!context.recording_store->enqueue(
+                voiceedge::RecordingRecord{segment, "", "failed", 0, 0.0, error.what()})) {
+          ++context.stats.persist_drops;
+        }
+      }
     }
   }
 }
@@ -666,6 +702,8 @@ void print_stats(const PipelineContext& context, std::uint64_t elapsed_ms) {
             << " asr_failures=" << stats.asr_failures.load(std::memory_order_relaxed)
             << " asr_overflows=" << stats.asr_overflows.load(std::memory_order_relaxed)
             << " asr_processing_ms=" << stats.asr_processing_ms.load(std::memory_order_relaxed)
+            << " persist_drops=" << stats.persist_drops.load(std::memory_order_relaxed)
+            << " persist_failures=" << stats.persist_failures.load(std::memory_order_relaxed)
             << " last_rms_dbfs=" << std::fixed << std::setprecision(1)
             << static_cast<double>(stats.last_rms_dbfs_x10.load(std::memory_order_relaxed)) / 10.0
             << " last_peak_dbfs="
@@ -693,6 +731,19 @@ int run_pipeline(const Options& options) {
     throw std::invalid_argument("pipeline_probe was built without ASR support; rebuild with VOICEEDGE_BUILD_ASR=ON");
   }
 #endif
+
+  if (options.persist_audio || options.persist_transcript) {
+    if (options.persist_dir.empty()) {
+      throw std::invalid_argument("--persist-dir is required when persistence is enabled");
+    }
+    context.recording_store = std::make_unique<voiceedge::RecordingStore>(
+        voiceedge::RecordingStoreConfig{options.persist_dir, options.persist_audio,
+                                        options.persist_transcript, options.persist_queue_capacity});
+    context.recording_store->start();
+    std::cout << "persistence_enabled root=\"" << options.persist_dir
+              << "\" audio=" << (options.persist_audio ? "true" : "false")
+              << " transcript=" << (options.persist_transcript ? "true" : "false") << '\n';
+  }
 
   std::cout << "pipeline_started device=" << options.device
             << " rate=" << audio.rate
@@ -740,6 +791,11 @@ int run_pipeline(const Options& options) {
     asr_thread.join();
   }
 #endif
+  if (context.recording_store) {
+    context.recording_store->stop();
+    context.stats.persist_failures.store(context.recording_store->failed_records(),
+                                         std::memory_order_relaxed);
+  }
 
   const auto finished = Clock::now();
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(finished - context.started).count();
@@ -754,6 +810,8 @@ int run_pipeline(const Options& options) {
             << " asr_drops=" << context.stats.asr_drops.load(std::memory_order_relaxed)
             << " asr_failures=" << context.stats.asr_failures.load(std::memory_order_relaxed)
             << " asr_overflows=" << context.stats.asr_overflows.load(std::memory_order_relaxed)
+            << " persist_drops=" << context.stats.persist_drops.load(std::memory_order_relaxed)
+            << " persist_failures=" << context.stats.persist_failures.load(std::memory_order_relaxed)
             << " xruns=" << context.stats.xruns.load(std::memory_order_relaxed)
             << " recoveries=" << context.stats.recoveries.load(std::memory_order_relaxed)
             << " read_errors=" << context.stats.read_errors.load(std::memory_order_relaxed)

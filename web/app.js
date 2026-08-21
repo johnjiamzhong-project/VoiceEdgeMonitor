@@ -15,7 +15,10 @@ const state = {
   wave: [],
   lastPacket: 0,
   audioContext: null,
+  gainNode: null,
   listening: false,
+  muted: false,
+  previousVolume: 0.25,
   nextAudioTime: 0,
 };
 
@@ -56,10 +59,12 @@ function setConnection(online, label = online ? "已连接" : "未连接") {
   badge.classList.toggle("online", online);
   badge.classList.toggle("offline", !online);
   $("listen-button").disabled = !online;
+  $("mute-button").disabled = !online || !state.listening;
+  $("volume-range").disabled = !online || !state.listening;
 }
 
 function updateState(message) {
-  setText("board-status", "在线");
+  setText("board-status", message.audio_state === "reconnecting" ? "音频重连中" : "在线");
   setText("device-name", message.device || "—");
   setText("audio-format", `${message.sample_rate || "—"} Hz · ${message.channels || "—"} ch`);
   setText("audio-device", message.format || "—");
@@ -83,6 +88,9 @@ function handleText(raw) {
   } else if (message.type === "vad_event") {
     setText("vad-status", message.event?.replace("vad_", "") || "unknown");
     addEvent(`${message.event || "vad_event"} · ${message.rms ?? ""}`);
+  } else if (message.type === "audio_event") {
+    addEvent(message.event === "capture_reconnecting" ? "音频设备重连中" : "音频设备已恢复",
+      message.event === "capture_reconnecting" ? "error" : "info");
   } else if (message.type === "asr_started") {
     setText("asr-status", "processing");
     addEvent(`ASR 开始 · segment ${message.segment_id}`);
@@ -152,7 +160,7 @@ function scheduleAudio(packet) {
   }
   const source = context.createBufferSource();
   source.buffer = buffer;
-  source.connect(context.destination);
+  source.connect(state.gainNode || context.destination);
   source.start(state.nextAudioTime);
   state.nextAudioTime += buffer.duration;
 }
@@ -230,22 +238,46 @@ async function toggleListening() {
   if (!state.listening) {
     state.audioContext = new AudioContext();
     await state.audioContext.resume();
+    state.gainNode = state.audioContext.createGain();
+    state.gainNode.gain.value = Number($("volume-range").value);
+    state.gainNode.connect(state.audioContext.destination);
     state.nextAudioTime = state.audioContext.currentTime + 0.05;
     state.listening = true;
     $("listen-button").textContent = "停止监听";
+    $("mute-button").disabled = false;
+    $("volume-range").disabled = false;
     setText("audio-status", "监听中");
   } else {
     state.listening = false;
     if (state.audioContext) await state.audioContext.close();
     state.audioContext = null;
+    state.gainNode = null;
     $("listen-button").textContent = "开始监听";
+    $("mute-button").disabled = true;
+    $("volume-range").disabled = true;
     setText("audio-status", "已停止");
   }
+}
+
+function updateVolume() {
+  const value = Number($("volume-range").value);
+  state.previousVolume = value || state.previousVolume;
+  if (!state.muted && state.gainNode) state.gainNode.gain.value = value;
+  $("volume-value").value = `${Math.round(value * 100)}%`;
+}
+
+function toggleMute() {
+  state.muted = !state.muted;
+  if (state.gainNode) state.gainNode.gain.value = state.muted ? 0 : Number($("volume-range").value);
+  $("mute-button").textContent = state.muted ? "取消静音" : "静音";
+  setText("audio-status", state.muted ? "监听静音" : "监听中");
 }
 
 $("connect-button").addEventListener("click", connect);
 $("disconnect-button").addEventListener("click", disconnect);
 $("listen-button").addEventListener("click", toggleListening);
+$("mute-button").addEventListener("click", toggleMute);
+$("volume-range").addEventListener("input", updateVolume);
 $("clear-events").addEventListener("click", () => {
   $("event-list").innerHTML = '<li class="empty-state">暂无事件</li>';
 });
