@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VoiceEdgeMonitor</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">RK3588 EDGE AUDIO</p>
+        <h1>VoiceEdgeMonitor</h1>
+      </div>
+      <div class="connection-panel">
+        <label for="ws-url">WebSocket</label>
+        <input id="ws-url" spellcheck="false" />
+        <button id="connect-button" class="primary">连接</button>
+        <button id="disconnect-button">断开</button>
+        <span id="connection-badge" class="badge offline">未连接</span>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="metric-grid">
+        <article class="metric-card">
+          <span class="metric-label">板端状态</span>
+          <strong id="board-status">未知</strong>
+          <small id="device-name">—</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">音频格式</span>
+          <strong id="audio-format">—</strong>
+          <small id="audio-device">—</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">VAD</span>
+          <strong id="vad-status">idle</strong>
+          <small id="vad-counts">started 0 / ended 0</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">ASR</span>
+          <strong id="asr-status">idle</strong>
+          <small id="asr-metrics">segments 0 / 0 ms</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">采集帧数</span>
+          <strong id="captured-frames">0</strong>
+          <small id="client-count">clients 0</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">错误 / XRUN</span>
+          <strong id="error-count">0 / 0</strong>
+          <small id="recovery-count">recoveries 0</small>
+        </article>
+      </section>
+
+      <section class="panel waveform-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">LIVE PCM</p>
+            <h2>实时波形</h2>
+          </div>
+          <span id="packet-status" class="muted">等待音频包</span>
+        </div>
+        <canvas id="waveform" width="1200" height="300"></canvas>
+        <div class="audio-controls">
+          <button id="listen-button" class="primary" disabled>开始监听</button>
+          <span id="audio-status" class="muted">浏览器音频需要用户点击后启动</span>
+        </div>
+      </section>
+
+      <section class="two-column">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">ASR OUTPUT</p>
+              <h2>识别结果</h2>
+            </div>
+          </div>
+          <ol id="transcript-list" class="transcript-list">
+            <li class="empty-state">等待识别结果</li>
+          </ol>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVENT STREAM</p>
+              <h2>运行事件</h2>
+            </div>
+            <button id="clear-events">清空</button>
+          </div>
+          <ol id="event-list" class="event-list">
+            <li class="empty-state">暂无事件</li>
+          </ol>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

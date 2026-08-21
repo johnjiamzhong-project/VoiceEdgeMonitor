@@ -1,0 +1,29 @@
+# Browser Web Client
+
+这是一个无外部依赖的静态 Web Client，浏览器直接连接 RK3588 WebSocket Server。
+
+## 启动
+
+在主机上执行：
+
+```bash
+python3 -m http.server 8080 --directory web
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8080/?ws=ws://<RK3588_IP>:8765/voiceedge
+```
+
+页面支持：
+
+- 状态 JSON 展示
+- VAD/ASR 事件和识别文本
+- `VEA1` PCM 波形解析
+- 用户点击后启动的浏览器音频监听
+- WebSocket 断线退避重连
+- 有界事件和识别历史列表
+
+浏览器所在主机必须能访问 RK3588 的 WebSocket 端口。浏览器音频播放需要用户
+主动点击“开始监听”，这是浏览器自动播放策略的要求。
