@@ -29,7 +29,7 @@ silence_ms=1000
 
 这些值需要使用实际 C310 的安静、噪声和讲话录音重新标定，不能视为最终声学参数。
 
-## Pipeline 配置
+## 处理管线配置
 
 ```bash
 build/pipeline_probe \
@@ -40,7 +40,7 @@ build/pipeline_probe \
   --vad-silence-ms=1000
 ```
 
-Pipeline 状态会输出当前 VAD 状态、开始/结束事件次数和最新 RMS；事件格式为：
+处理管线状态会输出当前 VAD 状态、开始/结束事件次数和最新 RMS；事件格式为：
 
 ```text
 vad_event type=vad_started timestamp_ms=... duration_ms=0 rms=...

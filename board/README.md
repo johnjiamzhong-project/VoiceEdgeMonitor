@@ -1,13 +1,11 @@
-# ALSA capture probe
+# ALSA 采集探针
 
-`capture_probe` is the Phase 1 hardware probe. It only opens the configured
-ALSA capture device, reads PCM, reports signal statistics and optionally writes
-a PCM WAV file. It does not load VAD/ASR models and does not use the network.
+`capture_probe` 是 Phase 1 硬件探针。它只负责打开配置的 ALSA 采集设备、读取 PCM、
+报告信号统计信息，并按需写入 PCM WAV 文件。它不会加载 VAD/ASR 模型，也不使用网络。
 
-## Build on the RK3588 board
+## 在 RK3588 板端构建
 
-The target needs a C++17 compiler, CMake, `pkg-config` and ALSA development
-headers/library:
+目标环境需要 C++17 编译器、CMake、`pkg-config` 以及 ALSA 开发头文件和库：
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON -DVOICEEDGE_BUILD_WS=ON
@@ -15,10 +13,9 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-## Run with the validated C310 input
+## 使用已验证的 C310 输入运行
 
-The card number can change when USB devices are enumerated. Prefer the stable
-card name:
+USB 设备枚举时声卡编号可能发生变化，建议优先使用稳定的声卡名称：
 
 ```bash
 build/capture_probe \
@@ -29,37 +26,33 @@ build/capture_probe \
   --wav=/tmp/voiceedge-c310-30s.wav
 ```
 
-The current validated baseline is 16 kHz, mono, `S16_LE`. Without `--run-ms`,
-the probe runs until Ctrl+C. `SIGINT` and `SIGTERM` stop the capture and close
-the ALSA handle cleanly.
+当前已验证的基线参数为 16 kHz、单声道、`S16_LE`。不指定 `--run-ms` 时，探针会一直
+运行到按下 Ctrl+C。收到 `SIGINT` 或 `SIGTERM` 后会停止采集并正常关闭 ALSA 句柄。
 
-The device can also be supplied through `VOICEEDGE_CAPTURE_DEVICE`; an
-explicit `--device` takes precedence:
+也可以通过 `VOICEEDGE_CAPTURE_DEVICE` 提供设备；显式指定的 `--device` 优先级更高：
 
 ```bash
 VOICEEDGE_CAPTURE_DEVICE=hw:CARD=U0x46d0x81b,DEV=0 \
   build/capture_probe --run-ms=10000
 ```
 
-Each statistics line reports elapsed time, RMS/peak level in dBFS, frames,
-XRUNs, recoveries and read errors. A successful Phase 1 stability run must
-record its duration and environment and must not claim long-run stability from
-the short smoke test alone.
+每行统计信息包含运行时间、dBFS 单位的 RMS/峰值电平、帧数、XRUN 数量、恢复次数和读取
+错误数。一次合格的 Phase 1 稳定性测试必须记录测试时长和运行环境，不能仅凭短时冒烟
+测试就宣称已经具备长期稳定性。
 
-## Phase 2 pipeline probe
+## Phase 2 音频处理管线探针
 
-`pipeline_probe` adds two independent bounded queues:
+`pipeline_probe` 增加两个相互独立且有界的队列：
 
 ```text
-ALSA capture
-   ├─> processing queue -> processing thread -> audio state
-   └─> monitor queue   -> monitor consumer
+ALSA 采集
+   ├─> 处理队列 -> 处理线程 -> 音频状态
+   └─> 监控队列 -> 监控消费者
 ```
 
-The processing queue rejects new frames when full and increments
-`processing_drops`. The monitor queue drops its oldest frame when full and
-increments `monitor_drops`. The monitor consumer is a local stand-in for the
-future network sender; no WebSocket or ASR is included yet.
+处理队列满时拒绝新的音频帧，并递增 `processing_drops`。监控队列满时丢弃最旧的音频帧，
+并递增 `monitor_drops`。监控消费者只是未来网络发送器的本地替代实现；此阶段还不包含
+WebSocket 或 ASR。
 
 ```bash
 build/pipeline_probe \
@@ -71,12 +64,12 @@ build/pipeline_probe \
   --monitor-capacity=64
 ```
 
-Use `--monitor-delay-ms` to exercise monitor backpressure without changing the
-processing path. All threads are joined during normal shutdown.
+可以使用 `--monitor-delay-ms` 模拟监控侧背压，同时不改变处理路径。正常退出时会等待并
+回收所有线程。
 
-## Phase 3 WebSocket Server
+## Phase 3 WebSocket 服务端
 
-Build with `-DVOICEEDGE_BUILD_WS=ON`, then start the board Server:
+使用 `-DVOICEEDGE_BUILD_WS=ON` 构建后，在板端启动 WebSocket 服务端：
 
 ```bash
 build/ws_server \
@@ -86,7 +79,7 @@ build/ws_server \
   --device=hw:CARD=U0x46d0x81b,DEV=0
 ```
 
-The CLI Client can connect from a host with the Boost.Beast headers available:
+在具备 Boost.Beast 头文件的主机上，可以使用 CLI 客户端连接：
 
 ```bash
 build/ws_cli \
@@ -95,13 +88,12 @@ build/ws_cli \
   --path=/voiceedge
 ```
 
-The Server sends state JSON and binary PCM packets. The packet format is
-documented in [`docs/protocol.md`](../docs/protocol.md).
+服务端会发送状态 JSON 和二进制 PCM 数据包。数据包格式见
+[`docs/WebSocket协议.md`](../docs/WebSocket协议.md)。
 
-## Phase 4 energy VAD
+## Phase 4 能量 VAD
 
-`pipeline_probe` now includes a configurable energy VAD in the processing
-thread. The initial candidate values are:
+`pipeline_probe` 现在在处理线程中包含可配置的能量 VAD。初始候选参数为：
 
 ```text
 start_rms=0.015
@@ -110,14 +102,13 @@ min_speech_ms=125
 silence_ms=1000
 ```
 
-Override them with `--vad-start-rms`, `--vad-end-rms`,
-`--vad-min-speech-ms` and `--vad-silence-ms`. The state machine emits
-`vad_started` and `vad_ended` events. See [`docs/vad.md`](../docs/vad.md) for
-the state machine and acceptance metrics.
+可以使用 `--vad-start-rms`、`--vad-end-rms`、`--vad-min-speech-ms` 和
+`--vad-silence-ms` 覆盖这些参数。状态机产生 `vad_started` 和 `vad_ended` 事件。
+状态机和验收指标见 [`docs/VAD设计与验收.md`](../docs/VAD设计与验收.md)。
 
-## Phase 5 offline ASR
+## Phase 5 离线 ASR
 
-ASR is an optional build target. Enable it with:
+ASR 是可选构建目标，可通过以下参数启用：
 
 ```bash
 cmake -S . -B build \
@@ -125,11 +116,10 @@ cmake -S . -B build \
   -DSHERPA_ONNX_ROOT="$SHERPA_ONNX_ROOT"
 ```
 
-`pipeline_probe` keeps ASR inference in a separate bounded queue and worker.
-See [`docs/asr.md`](../docs/asr.md) for model paths, options and acceptance
-metrics.
+`pipeline_probe` 使用独立的有界队列和工作线程执行 ASR 推理。模型路径、运行选项和验收
+指标见 [`docs/离线ASR设计与验收.md`](../docs/离线ASR设计与验收.md)。
 
-To persist final ASR records locally, explicitly enable one or both outputs:
+如需在本地保存最终 ASR 记录，必须显式启用以下一个或两个输出：
 
 ```bash
 build/pipeline_probe \
@@ -140,5 +130,4 @@ build/pipeline_probe \
   --persist-transcript
 ```
 
-Audio is saved as speech-segment WAV files and text/metadata as JSONL. Both
-outputs are disabled by default.
+音频会保存为语音片段 WAV 文件，文本和元数据会保存为 JSONL。两个输出默认均关闭。

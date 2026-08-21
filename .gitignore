@@ -18,6 +18,7 @@
 
 # Local/private configuration
 config/config.yaml
+/board_archive/
 .env
 .env.*
 PROJECT_MEMORY.md

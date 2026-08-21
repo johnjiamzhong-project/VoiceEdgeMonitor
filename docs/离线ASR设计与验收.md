@@ -28,7 +28,7 @@ build/asr_probe \
 
 输出必须包含最终文本、模型加载耗时、处理耗时、音频时长和 RTF。
 
-## Pipeline ASR 队列
+## 处理管线 ASR 队列
 
 VAD 结束后生成一个有界 `SpeechSegment`，进入独立 ASR 队列：
 
@@ -42,7 +42,7 @@ VAD 结束后生成一个有界 `SpeechSegment`，进入独立 ASR 队列：
 - 单段语音超过 `max_segment_ms` 时增加 `asr_overflows` 并丢弃该段。
 - ASR 失败增加 `asr_failures`，不导致采集线程退出。
 
-Pipeline 启用 ASR 的关键参数：
+处理管线启用 ASR 的关键参数：
 
 ```bash
 --asr-model <path>

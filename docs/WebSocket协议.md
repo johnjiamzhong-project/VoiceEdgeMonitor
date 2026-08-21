@@ -3,9 +3,9 @@
 ## 连接方向
 
 ```text
-RK3588 WebSocket Server
+RK3588 WebSocket 服务端
         ↑
-主机 Web Client / CLI Client
+主机 Web 客户端 / CLI 客户端
 ```
 
 默认地址：
@@ -18,7 +18,7 @@ ws://<RK3588_IP>:8765/voiceedge
 
 ## 文本消息
 
-### Server hello
+### 服务端 hello
 
 ```json
 {"type":"hello","version":1,"server":"VoiceEdgeMonitor"}
@@ -67,7 +67,7 @@ VAD 事件使用文本 JSON：
 `event` 当前为 `vad_started` 或 `vad_ended`，状态值为 `idle`、`starting`、
 `speaking` 或 `ending`。
 
-启用外部 sherpa-onnx ASR 后，Server 还会发送：
+启用外部 sherpa-onnx ASR 后，服务端还会发送：
 
 ```json
 {"type":"asr_started","segment_id":1,"start_timestamp_ms":1875,"end_timestamp_ms":4375}
@@ -85,23 +85,23 @@ VAD 事件使用文本 JSON：
 ```
 
 状态中的 `audio_state` 为 `online` 或 `reconnecting`。设备重连采用退避策略，
-不会因为一次 ALSA/USB I/O 错误直接退出 WebSocket Server。
+不会因为一次 ALSA/USB I/O 错误直接退出 WebSocket 服务端。
 
 ## 二进制音频消息
 
-每个 WebSocket binary message 是一个 PCM 音频包，字节序为 little-endian。
+每个 WebSocket 二进制消息是一个 PCM 音频包，字节序为 little-endian。
 包头固定 32 字节，后面紧跟 `S16_LE` 样本数据。
 
 | 偏移 | 长度 | 字段 |
 | ---: | ---: | --- |
-| 0 | 4 | ASCII magic：`VEA1` |
+| 0 | 4 | ASCII 魔数：`VEA1` |
 | 4 | 1 | 协议版本，当前为 `1` |
 | 5 | 1 | 编码，`0` 表示 PCM S16_LE |
 | 6 | 1 | 声道数 |
 | 7 | 1 | 保留，当前为 0 |
 | 8 | 4 | 采样率 |
 | 12 | 8 | 音频序列号 |
-| 20 | 8 | 相对 Server 启动时间戳，毫秒 |
+| 20 | 8 | 相对服务端启动时间戳，毫秒 |
 | 28 | 4 | 样本数量（所有声道合计） |
 | 32 | N | `int16` PCM 样本 |
 
@@ -110,13 +110,13 @@ VAD 事件使用文本 JSON：
 
 ## 队列和断开策略
 
-- Server 为每个 Client 使用独立的有界发送队列。
-- Client 写入慢时只影响该 Client。
-- 当前队列满时丢弃最旧消息，Server 主采集线程不等待网络写入。
+- 服务端为每个客户端使用独立的有界发送队列。
+- 客户端写入慢时只影响该客户端。
+- 当前队列满时丢弃最旧消息，服务端主采集线程不等待网络写入。
 - 浏览器或 CLI 断开不影响板端采集。
-- Server 停止时关闭所有 Client；CLI 将正常结束 WebSocket EOF 视为结束，不视为协议错误。
+- 服务端停止时关闭所有客户端；CLI 将正常结束 WebSocket EOF 视为结束，不视为协议错误。
 
 ## 当前未实现
 
-- Client 控制命令尚未定义。
+- 客户端控制命令尚未定义。
 - TLS、鉴权和跨网部署尚未实现。

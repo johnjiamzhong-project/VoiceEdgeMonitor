@@ -17,10 +17,10 @@ VoiceEdgeMonitor 是一个基于 RK3588 的边缘语音采集、识别与 Web �
 
 - Phase 1：C310 ALSA 采集已完成
 - Phase 2：有界音频处理队列已完成
-- Phase 3：RK3588 WebSocket Server 和 CLI Client 已完成
+- Phase 3：RK3588 WebSocket 服务端和 CLI 客户端已完成
 - Phase 4：能量 VAD 已接入
 - Phase 5：离线 SenseVoice ASR 和 WebSocket ASR 事件已接入
-- Phase 6：浏览器 Web UI 初版已完成
+- Phase 6：浏览器 Web 界面初版已完成
 - Phase 7：长时间稳定性、慢客户端和断线恢复验收进行中
 
 当前正式输入设备是 Logitech C310 USB 麦克风，3.5mm CTIA 输入保留为后续兼容项。
@@ -30,11 +30,11 @@ VoiceEdgeMonitor 是一个基于 RK3588 的边缘语音采集、识别与 Web �
 ```text
 C310
   → ALSA
-  → bounded audio queues
+  → 有界音频队列
   → VAD
-  → SenseVoice offline ASR
-  → WebSocket Server
-  → CLI / Browser Web Client
+  → SenseVoice 离线 ASR
+  → WebSocket 服务端
+  → CLI / 浏览器 Web 客户端
 ```
 
 ## 快速开始
@@ -66,7 +66,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-### 2. 启动 RK3588 WebSocket Server
+### 2. 启动 RK3588 WebSocket 服务端
 
 ```bash
 build/ws_server \
@@ -105,7 +105,7 @@ http://127.0.0.1:8080/?ws=ws://<RK3588_IP>:8765/voiceedge
 
 ### 4. 可选本地保存
 
-音频和识别文字默认不保存。需要保存时，在板端 Server 启动参数中显式增加：
+音频和识别文字默认不保存。需要保存时，在板端服务端启动参数中显式增加：
 
 ```bash
 --persist-dir=/data/voiceedge \
@@ -113,19 +113,20 @@ http://127.0.0.1:8080/?ws=ws://<RK3588_IP>:8765/voiceedge
 --persist-transcript
 ```
 
-语音段会保存为 WAV，识别结果和元数据保存为 JSONL。当前 Web UI 没有保存按钮。
+语音段会保存为 WAV，识别结果和元数据保存为 JSONL。当前 Web 界面没有保存按钮。
 
 ## 文档入口
 
-- [板端构建、采集、Pipeline 和 Server 说明](board/README.md)
-- [WebSocket 协议](docs/protocol.md)
-- [VAD 设计与验收](docs/vad.md)
-- [离线 ASR、模型和持久化](docs/asr.md)
-- [浏览器 Web Client](web/README.md)
+- [完整部署说明](docs/部署说明.md)
+- [板端构建、采集、处理管线和服务端说明](board/README.md)
+- [WebSocket 协议](docs/WebSocket协议.md)
+- [VAD 设计与验收](docs/VAD设计与验收.md)
+- [离线 ASR、模型和持久化](docs/离线ASR设计与验收.md)
+- [浏览器 Web 客户端](web/README.md)
 
 ## 已知限制
 
-- C310 可能受到 USB Hub、线缆或供电影响而自动 reset；Server 已支持 ALSA 设备退避重连，但仍需长时间验证。
+- C310 可能受到 USB 集线器、线缆或供电影响而自动重置；服务端已支持 ALSA 设备退避重连，但仍需长时间验证。
 - 尚未完成固定中文测试集上的 CER、噪声环境识别质量和完整链路 10～30 分钟验收。
 - 尚未完成慢客户端压力测试、浏览器兼容性矩阵和 TLS/鉴权。
 - 3.5mm CTIA 输入尚未作为当前第一阶段主输入验收。
@@ -192,43 +193,43 @@ Web 页面主要用于监控和展示，不参与板端语音核心处理。
 ### 音频主链路
 
 ```text
-Configured ALSA Microphone (C310 baseline)
+配置化 ALSA 麦克风（C310 基线）
         ↓
       ALSA
         ↓
        PCM
         ↓
-   Audio Buffer
+   音频缓冲
         ↓
        VAD
         ↓
        ASR
         ↓
- Recognition Result
+  识别结果
 ```
 
 ### Web 旁路链路
 
 ```text
-PCM Audio
+PCM 音频
     ↓
-Network Sender
+网络发送器
     ↓
-Host Web Server
+主机 Web 服务
     ↓
-Browser Audio Playback
+浏览器音频播放
 ```
 
 同时：
 
 ```text
-ASR Result / VAD State / Device State
+ASR 结果 / VAD 状态 / 设备状态
                   ↓
-            Network Sender
+            网络发送器
                   ↓
-           Host Web Server
+           主机 Web 服务
                   ↓
-              Browser UI
+              浏览器界面
 ```
 
 ---
@@ -319,7 +320,7 @@ Web 展示只是旁路能力。
 第一阶段优先使用适合语音识别的参数，例如：
 
 - 16 kHz
-- Mono
+- 单声道
 - S16_LE
 
 实际参数以 RK3588 音频设备能力为准。
@@ -503,8 +504,8 @@ Web 页面实时展示：
 - ALSA 采集线程不能等待网络
 - 网络线程不能阻塞 ASR
 - ASR 耗时不能导致音频采集停止
-- 禁止 busy loop
-- 禁止 detached thread
+- 禁止忙等循环
+- 禁止分离线程
 - 所有线程必须支持正常退出
 - Ctrl+C 后必须正常释放设备和线程
 
@@ -562,7 +563,7 @@ Web 页面实时展示：
 完成：
 
 ```text
-Configured ALSA Microphone
+配置化 ALSA 麦克风
 → ALSA
 → PCM
 → VAD
@@ -577,8 +578,8 @@ Configured ALSA Microphone
 
 ```text
 RK3588
-→ Network
-→ Host
+→ 网络
+→ 主机
 ```
 
 能够持续发送：
@@ -620,7 +621,7 @@ RK3588
 - AEC
 - AGC
 - NS
-- Beamforming
+- 波束成形（Beamforming）
 - 多麦克风阵列
 - 智能音箱业务
 - 大模型对话
@@ -656,8 +657,8 @@ RK3588
 
 完成：
 
-- RK3588 WebSocket Server
-- 主机 Web/CLI Client
+- RK3588 WebSocket 服务端
+- 主机 Web/CLI 客户端
 - 状态 JSON
 - 二进制 PCM 音频包
 - 心跳、断开和有界客户端队列
@@ -670,7 +671,7 @@ RK3588
 
 增加离线 ASR，并通过 WebSocket 实时展示识别结果。
 
-### Phase 6：浏览器 Web UI
+### Phase 6：浏览器 Web 界面
 
 完成：
 
@@ -700,21 +701,21 @@ RK3588
 项目完成后，用户在 RK3588 麦克风前说话：
 
 ```text
-User Voice
+用户语音
     ↓
-Configured ALSA Microphone
+配置化 ALSA 麦克风
     ↓
-RK3588 ALSA Capture
+RK3588 ALSA 采集
     ↓
 VAD
     ↓
 ASR
     ↓
-Network
+网络
     ↓
-Host Web Server
+主机 Web 服务
     ↓
-Browser
+浏览器
 ```
 
 浏览器能够同时看到：
